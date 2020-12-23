@@ -1,0 +1,195 @@
+---
+title: "Study of Effect of High Voter Turnout on Canadian Federal Election"
+author: "Kaiyue Wu"
+date: "2020.12.09"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(kableExtra)
+library(lme4)
+library(knitr)
+library(pander)
+library(tableone)
+# Loading in the cleaned survey Data
+survey_data <- read_csv("data.csv")
+survey_data <- survey_data %>%
+  mutate(feelings_life = feelings_life * 10)
+# Loading in the cleaned census Data
+census_data <- read_csv("gss.csv")
+#Data cleaning
+census_data <- census_data  %>%
+  filter(age >= 18) %>%
+  drop_na(citizenship_status) %>%
+  filter(citizenship_status != "Don't know") %>%
+  select("age", "sex", "feelings_life", "education", "language_home", "province") %>%
+  mutate(feelings_life = feelings_life * 10)
+
+model <- glmer(vote_for_lib ~ age 
+               + as.factor(sex) 
+               + feelings_life 
+               + as.factor(education)
+               + as.factor(language_home)
+               + (1|province), 
+               data = survey_data, family = binomial)
+```
+
+__Keywords:__ $\cdot$ Liberal Party $\cdot$ Education $\cdot$ Province $\cdot$ Feelings_life $\cdot$ First language
+
+## Introduction
+
+|     It is worth for a party, or a candidate to figure out why electors support him regardless of the result of a election. However, it is impossible to talk to every elector and write down their attitude. So a survey and a statistical analysis is necessary. With a limited number of sample, one can predict how likely is it for a elector, with certain features, will vote for a candidate. 
+|     The voter turnout of 2019 Canadian Federal Election is 67%(Elections Canada). This means that approximately one third of electors' voice was not heard. To simulate the situation where every eligible elector votes and predict the result based on that, post stratification can be applied. A model will be firstly fitted on a small data set, then it will be applied to the census, which was split into cells, to predict the result of each cell. And finally the result of each cell are summed with different weight. 
+|     This analysis needs two data sets. In the next section, Methodology, they will be introduced and the model fitted will also be explained there. The following section is the result section. There the model and the prediction will be explicitly displayed. In the discussion section, the prediction from the result section will be compared to the real result and weakness of this analysis will also be stated.
+
+## Methodology
+### Data
+
+```{r, results='hide'}
+ctsvar <- c("age", "feelings_life")
+discrete_factor <- c("sex", "education", "language_home", "province")
+survey_data[discrete_factor] <- lapply(survey_data[discrete_factor], factor)
+census_data[discrete_factor] <- lapply(census_data[discrete_factor], factor)
+vars <- c("age", "sex", "feelings_life", "education", "language_home")
+table1S <- CreateTableOne(vars = vars, data = survey_data)
+table1C <- CreateTableOne(vars = vars, data = census_data)
+a <- print(table1S, quote = TRUE, noSpace = TRUE)
+b <- print(table1C, quote = TRUE, noSpace = TRUE)
+```
+
+|     Two datasets, Canadian Election Study 2019 phone survey result(CesR2019) for model training and General social survey on Family 2017 result(gss) for post stratification, are used in this study. 
+|     Since the goal of this study is to predict and compare to the real result the result in the situation where every eligible voter votes in the federal election, the population is all Canadian citizens aged above 18. The frame are those that the two surveys target, and the sample are those who completed the surveys. 
+|     age, feelings_life, language_home, sex and education, province and vote_for_lib are selected from the cesR2019 dataset. Each variable stands for the following:  
+$\cdot$ __age__ : Age of the individual  
+$\cdot$ __sex__ : Gender of the individual  
+$\cdot$ __feelings_life__ : Self rated life satisfaction(score out of 100)  
+$\cdot$ __language_home__ : First language of the individual  
+$\cdot$ __education__ : Highest education level the individual had obtained(or in progress)   
+$\cdot$ __province__ : The province the individual is current living in(even tho the variable name is province, the three territories are included of this variable in cesR)  
+$\cdot$ __vote_for_lib__ : Whether or not the individual would vote for the liberal party. 1 stands for yes otherwise                            0  
+
+|     As one goal is to predict how many elector would vote for the liberal party, vote_for_lib is selected as response. In the dataset for model training, cesR2019, vote_for_lib is a new feature created according to another feature, q11. In the ces survey, the eleventh question asks for the party the individual would vote for and it has six integers from 1 to 6 corresponding to the six parties. In particular, the number that represents the liberal party is 1. After dropping invalid rows and rows that have -9(Don't know) or -8(refused) in q11, 1 is assigned to vote_for_lib if the value of q11 in the same row is 1 otherwise 0. 
+|     In the original cesR dataset, feelings_life is a categorical variable that has 1 stands for Very satisfied, 2 stands for Fairly satisfied, 3 stands for Not very satisfied, 4 stands for Not at all satisfied and 3 other numbers for refused, don't know or skipped. Only rows have 1,2,3 or 4 as value in this feature are kept. And in gss, feelings_life is a numerical feature from 0 to 10. To make them match, values in cesR are adjusted and 1 is mapped to 10, 2 is mapped to 7.5, 3 is mapped to 2.5 and 4 is mapped to 0. And then all values of feelings_life in both gss and cesR are multiplied by 10 to make it closer to age in scale so that the coefficients in model would not be too small in absloute value. 
+|     A basic data cleaning is performed to cesR2019 after previous steps. All variables have three integers, -9, -8 and -7 that stand for Don't know, refused and skipped. All rows that have any of -8 and -7 are dropped. And rows that have -9 are either dropped or have -9 be modified to values that exist in gss. In particular, if a variable in gss has a value equivalent to Don't know, -9s appeared of the variable in cesR are replaced by the value. Or if a variable in gss does not have a value equivalent to Don't know, all rows have -9 of that variable in cesR are dropped. And the dataset obtained is the survey_data for model training. However, three territories are missing after the whole process is completed.
+|     Baseline characters of individuals in cesR is indicated in __Figure 1:__ 
+```{r}
+as.data.frame(a)
+```
+__Figure 1__
+
+|     Unlike ces, gss also aims people aged under 18 and non-citizens. After filtering these two groups of people out, baseline characters of individuals in gss is indicated in __Figure 2:__ 
+```{r}
+as.data.frame(b)
+```
+__Figure 1__
+
+|     Oberving __Figure 2__, I find that there is transgender under sex and high school or equ under education are missing. Also the life satisfication score in gss is much higher than that in cesR in average. But a larger percentage of individuals in cesR had obtained a bachelor or above degree(or in progress).
+
+### Model
+
+|     The model I use is a random intercept logistic model. This is one kind of model in Multilevel Regression & Postratification(MRP) family. Logistic model is chosen since the variable I would like to predict, vote_for_lib is a boolean variable. As introduced in Data section, it has value 1 if the individual would vote for liberal party in the federal election otherwise 0. Also, due to different types of industries or economic conditions, the percentage of liberal party supporters over all electors varies across provinces, and then models that assumes that all provinces have the same intercept must be biased. Hence a random intercept model is necessary here.
+|     The independent variables are are, sex, education, feelings_life and language_home. And province is treated as a group level factor. Initially more features such as religion, place of birth and family net income are also taken into account and the model failed to converge. Then some features that present too detailed feature of individuals such as job type or number of marriage they had. After the model converges, some features that are not statistically significant(p-value is much larger than 0.05) are also discarded. And finally only 5 features are kept as independent variables.
+|     The model is run on R.studio and here is the final version of the model: 
+__Level 1__:
+\begin{align*}
+log(\frac{(p)}{1-(p)}) &= {\beta}_{0j} + 
+                            {\beta}_1X_{age} + 
+                            {\beta}_2X_{sex\_male} + 
+                            {\beta}_3X_{sex\_female}
+                           + {\beta}_4X_{sex\_transgender} + {\beta}_5X_{feelings\_life} \\
+                         &  + {\beta}_6X_{education\_Bachelor} 
+                            + {\beta}_7X_{education\_College} + 
+                            {\beta}_8X_{education\_Dipolma below bachelor} +
+                          {\beta}_9X_{education\_High school or equ} \\
+                        & +  {\beta}_10X_{education\_Less than high school} 
+                          +   {\beta}_{11}X_{education\_Trade certificatel} +
+                            {\beta}_{12}X_{language_home\_FR} + 
+                            {\beta}_{13}X_{language_home\_Non-official} 
+\end{align*}
+
+__Level 2__:
+\begin{align*}
+{\beta}_{0j} = r_{00} + r_{01}W_j
+\end{align*}
+
+|     In level 1 model, subscripts of $X$ are names of predictor variables or the category if one predictor is categorical. And every $\beta$ is the slope of each corresponding variable.${\beta}_{0j}$ is the random intercept dependent on province. $\beta_1$ and $\beta_5$ are slope of age and feelings_life, respectively. $\beta_2$ to $\beta_4$ are slope for sex, $\beta_6$ to $\beta_{11}$ are slope for education and $\beta_{12}$, $\beta{13}$ are slope for language_home. For level 2 model, $r_{00}$ is a fixed intercept for each province and $W_j$ is the value of province as a categorical variable.
+|     The formula given above does not directly compute the probability but the log odd of the probability that an individual would vote for the liberal party or not. Suppose that we have the information about an individual of the six features(age, sex, feelings_life, education, language_home and province) then plug in the formula and we have some number $a$. To solve for $p$ we just need to solve for the equation $log(\frac{(p)}{1-(p)}) = a$ and by high school math we have $p = \frac{e^a}{1+e^a}$. We know that $p$ ranges from $0$ to $1$. $log$ is a monotone increasing function, and $\frac{(p)}{1-(p)}$ is also monotone increasing when $p \in (0,1)$. Hence a positive coefficient($\beta$) indicates that the variable/factor has a positive effect on response. Also, when $a=0$, $p=0.5$. So if the log odd of an individual is positive then the individual is likely to vote for the liberal party otherwise not.
+
+### Postratification
+```{r, include=FALSE}
+census_data <- census_data %>%
+  mutate(age = round(age)) %>%
+  count(age, sex, feelings_life, education, province, language_home) %>%
+  group_by(age, sex, feelings_life, education, province, language_home)
+total <- sum(census_data$n)
+census_data$logodds_estimate <-
+  model %>%
+  predict(newdata = census_data)
+census_data$estimate <-
+  exp(census_data$logodds_estimate)/(1+exp(census_data$logodds_estimate))
+result <-  census_data %>%
+  mutate(cell_pred = estimate * n / total) %>%
+  group_by(province) %>%
+  summarise(province_predict = sum(cell_pred))
+```
+|     PostStratification is a technique that computes the weighted mean of estimates of cells that the census data is split into. The weight of each cell is the number of observations in the cell over total number of observations. This technique is applied in this study since it is a correction of non-probability based sampling. After applying the data cleaning described in Data section, six variables, age, sex, feelings_life, province, education and language_home, are selected and gss is split into cells by those variables. And the dataset obtained is the census data for poststratification.
+
+## Results
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+kable(summary(model)$coeff) %>%
+  kable_styling(full_width = F)
+```
+__Figure 3__: Coefficients, p-value, standard error and z value for each variable/factor 
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+result <- result %>%
+  mutate(num_of_seat_pred = 338 * province_predict) %>%
+  mutate(real_result = c(0, 11, 4, 6, 6, 10, 79, 4, 35, 0))
+sums <- data.frame("sum", sum(result$province_predict), sum(result$num_of_seat_pred), 157)
+names(sums) <- names(result)
+result_with_sum <- rbind(result, sums)
+names(result_with_sum) <- c("Province", "Support Rate Contribution Prediction(%)",
+                            "# of Seats Prediction", "Real Result 2019")
+kable(result_with_sum) %>%
+  kable_styling(full_width = F)
+```
+__Figure 4__: Prediction compared to real result(real result data obtained from Elections Canada)
+
+|     Figure 3 displays the outcomes of the model. Some variables have large p-values(much greater thab 0.05).Those variables include all three categories in sex, having an above high school and not above Bachelor degree and first language is not official language. These factors have little impact on the results. And other variables are significant as they have small p-value. According to the table, the slope of age, feelings_life and Non-official are all positive. This means that individuals that are older, are more satisfied about their life or having an official language as first language are more likely to vote for the liberal party. Individuals that holds trade certificate degree are the group that are least possible to support the liberal party. For each categorical variable, one category is omitted. The slope of the omitted categories is 0. And the slope of other categories of the same variable indicate how they affect the response compared with the missing category. 
+
+|     Figure 4 compares the prediction made by the model applied to census_data to the real result. The first column are the name of the provinces. The second column is the predicted percentage of each province contribute to the predicted total support rate of liberal party, `r sum(result$province_predict)`. This number is based off the post-stratification analysis of the proportion of electors in favor of the liberal party modeled by a random intercept logistic model, which accounted for age, sex, feelings_life, education, province and language_home.The third is obtained by multiplying values in the second column by 338, the total number of seats in the House of Commons. And the last column is the real election result from 2019. The last row just sums everything under the corresponding columns. The predicted total number of seats, `r sum(result$num_of_seat_pred)`, and the real result are very close. But the prediction for Ontario is $37.5\%$ less than the true result. And in general, except for the two provinces with large population, Ontario and Quebec, the prediction is always higher than the real result. 
+
+## Discussion
+### Summary
+|     Using the cesR dataset from 2019 Canada Election Phone Survey and gss dataset from 2017 General Social Survey on Family, a post-stratification analysis modeled by a random intercept logistic model was performed to predict the chance of the electors with certain features would vote for the liberal party. The final result shows that `r sum(result$province_predict)`$\%$ of the voters are predicted to be supporting the liberal party. One bias the study has is that gss, the census data has only "EN"(English), "FR"(French) and Non-official as categories of language_home. But the same variable in cesR, the survey data has more values such as "English and French", "English and non-official language", "French and non-official language", etc. When performing data cleaning "English and non-official language" is classified as "EN" and likewisely, "French and non-official language" is classified as "FR". And those rows with "English and French" are dropped since there is no way to assign it to only one of "EN" or "FR". The study con not represent favor of bilinguals who speak English and French as first language. And those bilinguals who speak one official language plus some non-official language are merged into people who can only speak one official language. Similiar thing also happened to sex but the output of model shows that sex is not a significant factor so there is no need to worry about it. Another bais is about feelings_life. As introduced in Data section, there are only four values for feelings_life in cesR but feelings_life in gss has 10. According to the wording meaning of discription of each value, 1,2,3 and 4 in cesR are mapped to 0, 2.5,7.5 and 10. And there is a huge gap between 2.5 and 7.5. So the model cannot reflect the real probability for individuals whose feelings_life score falls between 2.5 and 7.5.
+
+### Conclusion
+|     Under the situation where every eligible elector votes, `r round(sum(result$num_of_seat_pred))`, rounded to the nearest integer, of the voters are predicted to be in favor of voting liberal party based of this study. And this is very close to the real result, 157. As mentioned in Summary, even if a lot of people who speaks a non-official language as first language are merged into people who speaks english as first language, non-official is still a significant and positive factor compared to English and French. This means that it is worth for the liberty party to pay more attention to immigrants and or visible minorities. Also, the model output shows that people who obtained a Bachelor or Diploma below bachelor degree are non-significant factors. Combining that "above bachelor" is the category considered has 0 slope, the group of people who are highly educated neither supports nor opposes the liberal party. Hence the liberty party could focus on this group of people, study for their preference and turn them into signifcant positive factors.
+
+### Weakness
+|     The survey data chosen are from 2019, but the census dataset is from 2017. Electors voting intention might change in the passing 2 years(2017-2019). Even tho the model itself is accurate, the dataset where postratification is performed on is outdated so the result cannot reflect the true support rate. Another weakness is that cesR has more than 200 features but gss only has 81. So the census used in this study can not represent every aspect of the survey. The third weakness is similiar to the second one but it is about the goal of our study. The goal is to predict the result under the situation where everyone votes. If the census data chosen can not represent some group of people than the result would be bias. In other words, we need to find a dataset that records every type of people.
+And it is challenging to find such dataset. Even if there exists one, since we are not trainig the model on the census, it is also necessary to find a survery dataset that is also sufficiently representive. If the survey data is not representive enough, We have to merge values in census so the model can work on it. But this will make the census less representive and the result would be biased again.
+
+### Next Step
+|     The study is only interested in the probability whether one would vote for the liberal party or not. So a similiar study/analysis can be performed but uses multinomial logistic model instead of a binomial one. Also, a new dataset with more features could be chosen as census data, and a model that takes more variables into account could be built. And then apply postratification on the new dataset using the new model.
+
+## References
+
+
+1. General Social Survey: An Overview, 2019. (2019, February 20). Retrieved from https://www150.statcan.gc.ca/n1/pub/89f0115x/89f0115x2019001-eng.htm
+
+2. Alexander, R and Caetano, S. (2020, Oct 7). GSS.cleaning. Retrieved from U of T Quercus
+
+3. Paul A. Hodgetts and Rohan Alexander. CesR. Retrived from https://hodgettsp.github.io/cesR/
+
+4. kableExtra. (n.d.) Retrieved from https://www.rdocumentation.org/packages/kableExtra/versions/1.2.1
+
+5. Kazuki Yoshida. (2020-07-25). Introduction to tableone. Retrieved from https://cran.r-project.org/web/packages/tableone/vignettes/introduction.html
